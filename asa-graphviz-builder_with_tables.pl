@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Author: Akos
+# Author: Akos Daniel daniel.akos77ATgmail.com
 # Filename: asa-graphviz-builder_with_tables.pl
 # Current Version: 0.1 beta
 # Created: 10th of July 2013
@@ -37,7 +37,7 @@ use Regexp::Common;
 
 my $numberofargs = @ARGV;
 my $outfilename = $ARGV[1];
-print "\n==| asa-graphviz-builder_with_tables.pl v. 0.1 beta (10th of July 2013) by Akos \(no\@email.today\) |==\n";
+print "\n==| asa-graphviz-builder_with_tables.pl v. 0.1 beta (10th of July 2013) by Akos Daniel \(daniel.akos77ATgmail.com\) |==\n";
 
 if ($numberofargs < 2) {
 

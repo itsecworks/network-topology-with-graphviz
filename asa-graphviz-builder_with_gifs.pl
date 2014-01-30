@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Author: Akos (daniel.akos@media.saturn.com)
+# Author: Akos Daniel (daniel.akos77ATgmail.com)
 # Filename: asa-graphviz-builder_with_gifs.pl
 # Current Version: 0.1 beta
 # Created: 10th of July 2013
@@ -57,7 +57,7 @@ my @interfacesALL;
 
 my $numberofargs = @ARGV;
 my $outfilename = $ARGV[1];
-print "\n==| asa-graphviz-builder.pl v. 0.1 beta (10th of July 2013) by Akos \(daniel.akosATmedia.saturn.com\) |==\n";
+print "\n==| asa-graphviz-builder.pl v. 0.1 beta (10th of July 2013) by Akos Daniel\(daniel.akos77ATgmail.com\) |==\n";
 
 if ($numberofargs < 2) {
 

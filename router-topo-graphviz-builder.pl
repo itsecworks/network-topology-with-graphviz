@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Author: Akos (daniel.akos@media.saturn.com)
+# Author: Akos Daniel (daniel.akos77ATgmail.com)
 # Filename: router-topo-graphviz-builder.pl
 # Current Version: 0.1 beta
 # Created: 10th of July 2013
@@ -44,7 +44,7 @@ my @files = <*6509*.cfg>;
 ##################################################################################################
 # Open cfg files one by one and put the important rows from the configurations in one HUGE array
 
-print "\n==| router-topo-graphviz-builder.pl v. 0.1 beta (13th of Aug 2013) by Akos \(daniel.akosATmedia.saturn.com\) |==\n";
+print "\n==| router-topo-graphviz-builder.pl v. 0.1 beta (13th of Aug 2013) by Akos Daniel \(daniel.akos77ATgmail.com\) |==\n";
 print "Start loading the configuration files:\n";
 
 foreach my $file (@files) {
