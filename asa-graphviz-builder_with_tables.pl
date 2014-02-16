@@ -149,15 +149,17 @@ close (PARSEFILE);
 ##################################################################################################
 
 my @name_cmd;
+my @interface_cmd;
 my @vlan_cmd;
 my @nameif_cmd;
 my @seclevel_cmd;
 my @ipaddr_cmd;
+my @interfaces;
+my $interface_found = 'false'; # indicator for interface command
+
 my @hostname_cmd;
 my @route_cmd;
-my $interface_found = 'false'; # indicator for interface command
-my @interface_cmd;
-my @interfaces;
+
 
 foreach my $line (@Parse_array) {
 
@@ -189,7 +191,7 @@ foreach my $line (@Parse_array) {
 	}
 	if ($line =~ /^\sip\saddress/m && $interface_found eq 'true') { # find the lines *starts* with <space>ip address
 		@ipaddr_cmd = split (' ', $line);
-		if ($vlan_cmd[1] eq /\D/) {$vlan_cmd[1] = "no"};
+		if (!@vlan_cmd)	{$vlan_cmd[1] = "no"};
 		my $interfaceparams =  join (' ', $interface_cmd[1],$ipaddr_cmd[2],$ipaddr_cmd[3],$nameif_cmd[1],$seclevel_cmd[1],$vlan_cmd[1]);
 		push (@interfaces,$interfaceparams);
 		$interface_found = 'false';
@@ -206,6 +208,58 @@ foreach my $line (@Parse_array) {
 	if ($line =~ /^hostname/m) { # find the lines *starts* with hostname
 		@hostname_cmd = split (' ', $line);
 	}
+	
+	# --------------------
+	# Parse VPN config   |
+	# --------------------
+	#
+	# This parse is strongly based on the order of commands in the cisco asa config.
+	# If cisco changes it the complete parse will fail.
+	# The order of commands are the following:
+	# 1. crypto map <crypto_map_name> <ID> match address <ACL-name>
+	# 2. crypto map <crypto_map_name> <ID> set peer <Peer IP> 
+	# 3. crypto map <crypto_map_name> <ID> set ikev1 transform-set <transform_set like ESP-AES-256-SHA>
+	#
+	# --------------------------------------
+	# Parse Crypto ACL name from crypto map|
+	# --------------------------------------
+	#
+	# Example:
+	# crypto map <crypto_map_name> <ID> match address <ACL-name>
+	my $cry_matchaddr;
+	if ($line =~ /^crypto\smap/m && $line =~ /match\saddress/m) { # find the lines *starts* with "crypto map" and contains "match address"
+		my @crypto_map_match_cmd = split (' ', $line);
+		$cry_matchaddr = join (' ',$crypto_map_match_cmd[3],$crypto_map_match_cmd[6]); # Example "<cry_ID> <cry-acl_name>"
+	}
+
+	# ---------------
+	# Parse Peer IPs|
+	# ---------------
+	#
+	# Example:
+	# crypto map <crypto_map_name> <ID> set peer <Peer IP> 
+	my $cry_peer;
+	if ($line =~ /^crypto\smap/m && $line =~ /set peer/m) { # find the lines *starts* with 'crypto map' and contains 'set peer'
+		my @crypto_map_peer_cmd = split (' ', $line);
+		my $cry_peer = $crypto_map_peer_cmd[6]; # Example "<cry_peer_ip>"
+	}
+	
+	# --------------------------
+	# Parse IPSec transform set|
+	# --------------------------
+	# 
+	# Example:
+	# crypto map <crypto_map_name> <ID> set ikev1 transform-set <transform_set like ESP-AES-256-SHA>
+	my $cry_trset;
+	my @crypto_map_datas;
+	if ($line =~ /^crypto\smap/m && $line =~ /set\sikev1\stransform-set/m) { # find the lines *starts* with "crypto map" and contains "set ikev1 transform-set"
+		my @crypto_map_trset_cmd = split (' ', $line);
+		$cry_trset = $crypto_map_trset_cmd[7]; # Example "<cry_transformset_name>"
+		
+		my $crypto_map_datas = join (' ',$cry_matchaddr,$cry_peer,$cry_trset); # Example "<cry_ID> <cry-acl_name> <cry_peer_ip> <cry_transformset_name>"
+		push (@crypto_map_datas,$crypto_map_datas);
+	}
+	#
 }
 
 # 3/3.) Save the IPs of the routers from route command but before get the stupid name commands out
