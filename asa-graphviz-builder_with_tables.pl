@@ -22,7 +22,8 @@
 # 18.12.13 if there is no vlan on the interface where there is an IP, I write "vlan no"
 # 18.12.13 the automatic interface positioning is set based on security level.
 # 		   if the security-level > 49 put it on the left side, else put on right side.
-# 16.02.14 IPSec IKEv1 Lan-to-Lan VPN are parsed and graphed too.
+# 16.02.14 IPSec IKEv1 Lan-to-Lan VPNs are parsed and graphed too.
+# 21.02.14 IPSec IKEv1 Lan-to-Lan Dynamic VPNs are parsed and graphed too. They will be out on the default route.
 # -----------------------------------------------------------------------------------------------
 # 0.1 beta: (10th of July 2013)
 # 0.2 beta: (18th of Dec 2013)
@@ -190,6 +191,7 @@ my $cry_map_name_id;
 my $cry_peer;
 my $cry_trset;
 my $crypto_if;
+my $cry_dynmap_acl;
 my @crypto_map_datas;
 
 foreach my $line (@Parse_array) {
@@ -417,6 +419,27 @@ foreach my $line (@Parse_array) {
 		}
 	}
 	
+	#-------------------------------
+	#Parse IPSec enabled Interface |
+	#-------------------------------
+	#
+	#
+	#example for dynamic map
+	#crypto dynamic-map <dynmap-name> <ID> match address <access-list>
+	#crypto dynamic-map <dynmap-name> <ID> set ikev1 transform-set <transformsets>
+	
+	if ($line =~ /^crypto\sdynamic-map/m && $line =~ /match\saddress/m) {
+		my @crypto_dynmap_cmd = split (' ', $line);
+		$cry_dynmap_acl = $crypto_dynmap_cmd[6];
+	}
+
+	if ($line =~ /^crypto\sdynamic-map/m && $line =~ /set\sikev1\stransform-set/m) {
+		my @crypto_dynmap_cmd = split (' ', $line);
+		push (@crypto_map_datas,$crypto_dynmap_cmd[2]." ".$crypto_dynmap_cmd[3]." ".$cry_dynmap_acl." "."254.254.254.250"." ".$crypto_dynmap_cmd[7]);
+		$cry_dynmap_acl ='';
+	}
+	
+
 	#-------------------------------
 	#Parse IPSec enabled Interface |
 	#-------------------------------
@@ -888,7 +911,12 @@ print "\n";
 foreach my $crypto_map_data (@crypto_map_datas) {
 	my @crypto_map_data_splitted = split (' ', $crypto_map_data);
 	my @crypto_peerip_splitted = split ('\.',$crypto_map_data_splitted[3]);
-	print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"",$crypto_map_data_splitted[3],"\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\", labelloc=\"b\", image=\"router.gif\"]\n";
+	if ($crypto_map_data_splitted[3] = '254.254.254.250')  {
+		print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"","dynamic IP","\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\", labelloc=\"b\", image=\"router.gif\"]\n";
+	}
+	else {
+		print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"",$crypto_map_data_splitted[3],"\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\", labelloc=\"b\", image=\"router.gif\"]\n";
+	}
 }
 print "\n";
 
