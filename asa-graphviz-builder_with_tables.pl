@@ -911,7 +911,7 @@ print "\n";
 foreach my $crypto_map_data (@crypto_map_datas) {
 	my @crypto_map_data_splitted = split (' ', $crypto_map_data);
 	my @crypto_peerip_splitted = split ('\.',$crypto_map_data_splitted[3]);
-	if ($crypto_map_data_splitted[3] = '254.254.254.250')  {
+	if ($crypto_map_data_splitted[3] eq '254.254.254.250')  {
 		print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"","dynamic IP","\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\", labelloc=\"b\", image=\"router.gif\"]\n";
 	}
 	else {
