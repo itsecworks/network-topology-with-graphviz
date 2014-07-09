@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 # Author: Akos Daniel daniel.akos77ATgmail.com
+#
 # Filename: asa-graphviz-builder_with_tables.pl
 # Current Version: 0.1 beta
 # Created: 10th of July 2013
@@ -9,6 +10,20 @@
 # -----------------------------------------------------------------------------------------------
 # This is a rather crude and quick hacked Perl-script to build a config file
 # for dot to make beautiful graphs or topologies automaticaly.
+# Syntax:
+# -------
+# asa-graphviz-builder_with_tables.pl <Input filename> <Output filename>
+#
+# Mandatory arguments:
+# -------------------
+# <Input filename> : Name of inputfile. This file should contain the Cisco ASA configuration
+# <Output filename> : Name of outputfile. This name will be used for the dot file and for the generated png and svg file
+#
+# Example:
+# --------
+# ./asa-graphviz-builder_with_tables.pl asa-test.cfg asa-test.dot
+#
+# This will generate \"asa-test.dot.svg\" and \"asa-test.dot.png\" files
 # -----------------------------------------------------------------------------------------------
 # Known issues:
 # - Duplicate edges sometimes somewhere...
@@ -34,6 +49,7 @@ use List::MoreUtils qw(uniq);
 use Array::Utils qw(:all);
 use Term::Query qw( query);
 use Regexp::Common;
+use Net::Nslookup;
 
 ##################################################################################################
 # 1.) Syntax checking and help - BEGIN
@@ -53,8 +69,10 @@ if ($numberofargs < 2) {
     print "-------------------\n";
     print " <Input filename> : Name of inputfile. This file should contain the Cisco ASA configuration\n";
     print " <Output filename> : Name of outputfile. This name will be used for the dot file and for the generated png and svg file\n";
-	print "Example: ./asa-graphviz-builder_with_tables.pl asa-test.cfg asa-test.dot\n";
-	print "This will generate \"asa-test.dot.svg\" and \"asa-test.dot.png\" files\n";
+	print "Example:\n";
+	print "--------\n";
+	print " ./asa-graphviz-builder_with_tables.pl asa-test.cfg asa-test.dot\n";
+	print " This will generate \"asa-test.dot.svg\" and \"asa-test.dot.png\" files\n";
     die ("\n");
 
     } # End if
@@ -160,12 +178,13 @@ close (PARSEFILE);
 my @hostname_cmd;
 
 my @name_cmd;
+
 my @interface_cmd;
 my @vlan_cmd;
 my @nameif_cmd;
 my @seclevel_cmd;
 my @ipaddr_cmd;
-my @interfaces;
+my @interfaces; #						---------- key array for interface ------------------------
 my $interface_found = 'false'; # indicator for interface command
 
 my @object_network_cmd;
@@ -184,7 +203,7 @@ my @cry_acl_dst_groups;
 my @cry_acl_dst_groupsu;
 my @acl_src_group;
 
-my @route_cmd;
+my @route_cmd; #						---------- key array for static routes ----------------------
 
 my $cry_matchaddr;
 my $cry_map_name_id;
@@ -192,14 +211,16 @@ my $cry_peer;
 my $cry_trset;
 my $crypto_if;
 my $cry_dynmap_acl;
-my @crypto_map_datas;
+my @crypto_map_datas; #					---------- key array for crypto match, peer, trset ----------
+
+my @nat_cmds;
 
 foreach my $line (@Parse_array) {
 
 	#----------------
 	# Parse Hostname|
 	#----------------
-
+	#
 	if ($line =~ /^hostname/m) { # find the lines *starts* with hostname
 		@hostname_cmd = split (' ', $line);
 	}
@@ -208,10 +229,12 @@ foreach my $line (@Parse_array) {
 	# Parse name commands|
 	#---------------------
 	#
-	# example:
+	# Input example:
 	# name 192.168.1.1 waf01
 	# name 192.168.1.2 waf02
-	
+	# Output example:
+	# 192.168.1.1 waf01
+	# 192.168.1.2 waf02
 	if ($line =~ /^name\s/m) {
 		my @name_cmd_splitted = split (' ', $line);
 		push (@name_cmd,$name_cmd_splitted[1]." ".$name_cmd_splitted[2]);
@@ -220,23 +243,23 @@ foreach my $line (@Parse_array) {
 	#------------------
 	# Parse Interfaces|
 	#------------------
+	#
     # The order of if statements is important. 
 	# This is currently the following: interface->vlan->nameif->security-level->ip address
-
-	if ($line =~ /^interface/m) { # find the lines *starts* with interface
+	elsif ($line =~ /^interface/m) { # find the lines *starts* with interface
 		@interface_cmd = split (' ', $line);
 		$interface_found = 'true';
 	}
-	if ($line =~ /^\svlan/m && $interface_found eq 'true') { # find the lines *starts* with <space>vlan
+	elsif ($line =~ /^\svlan/m && $interface_found eq 'true') { # find the lines *starts* with <space>vlan
 		@vlan_cmd = split (' ', $line);
 	}
-	if ($line =~ /^\snameif/m && $interface_found eq 'true') { # find the lines *starts* with <space>nameif
+	elsif ($line =~ /^\snameif/m && $interface_found eq 'true') { # find the lines *starts* with <space>nameif
 		@nameif_cmd = split (' ', $line);
 	}
-	if ($line =~ /^\ssecurity-level/m && $interface_found eq 'true') { # find the lines *starts* with <space>security-level
+	elsif ($line =~ /^\ssecurity-level/m && $interface_found eq 'true') { # find the lines *starts* with <space>security-level
 		@seclevel_cmd = split (' ', $line);
 	}
-	if ($line =~ /^\sip\saddress/m && $interface_found eq 'true') { # find the lines *starts* with <space>ip address
+	elsif ($line =~ /^\sip\saddress/m && $interface_found eq 'true') { # find the lines *starts* with <space>ip address
 		@ipaddr_cmd = split (' ', $line);
 		if (!@vlan_cmd)	{$vlan_cmd[1] = "no"};
 		my $interfaceparams =  join (' ', $interface_cmd[1],$ipaddr_cmd[2],$ipaddr_cmd[3],$nameif_cmd[1],$seclevel_cmd[1],$vlan_cmd[1]);
@@ -256,25 +279,26 @@ foreach my $line (@Parse_array) {
 	# object network meeting-intern
 	#  fqdn v4 meeting-intern.mycompany.com
 	# 
-	# object network saturn-hansa-dhcp1
+	# object network myrange
 	#  range 10.7.4.100 10.7.4.199
-	#
-	
-	if ($line =~ /^object\snetwork/m) { # find the lines *starts* with object<space>network
+	elsif ($line =~ /^object\snetwork/m) { # find the lines *starts* with object<space>network
 		@object_network_cmd = split (' ', $line);
 		$object_network_name = $object_network_cmd[2];
 	}
-	if ($line =~ /^\ssubnet/m || $line =~ /^\shost/m || $line =~ /^\sfqdn\sv4/m || $line =~ /^\srange\s/m) { # find the lines *starts* with <space>subnet or <space>host or <space>fqdn or <space>range
+	elsif ($line =~ /^\ssubnet/m || $line =~ /^\shost/m || $line =~ /^\sfqdn\sv4/m || $line =~ /^\srange\s/m) { # find the lines *starts* with <space>subnet or <space>host or <space>fqdn or <space>range
 		my @object_cmd = split (' ', $line);
 		if ($object_cmd[0] eq 'host') {
 			$object_cmd[2] = '255.255.255.255';
 		}
 		elsif ($object_cmd[0] eq 'fqdn') {
-			my $ipaddress  = nslookup(host => $object_cmd[2], type => "PTR");
+			my $ipaddress  = nslookup(host => $object_cmd[2], type => "A");
 			$object_cmd[1] = $ipaddress;
 			$object_cmd[2] = '255.255.255.255';
 		}
 		elsif ($object_cmd[0] eq 'range') {
+			# nothing to do...$object_cmd[1],$object_cmd[2] will be correct
+		}
+		elsif ($object_cmd[0] eq 'subnet') {
 			# nothing to do...$object_cmd[1],$object_cmd[2] will be correct
 		}
 		my $temp1 = join (' ',$object_network_name,$object_cmd[1],$object_cmd[2] );
@@ -292,12 +316,16 @@ foreach my $line (@Parse_array) {
 	# ----------------------------
 	# 
 	# Example Config:
+	# names
+	# name 2.2.2.2 testname1
+	# name 2.2.2.3 testname2
 	# object-group network fa-opelgmbh
 	#  network-object host 192.168.15.32
 	#  network-object 172.17.139.0 255.255.255.192
+	#  network-object testname1 255.255.255.192
 	#  group-object group2
-	#  network-object object mytestnetwork
-	
+	# object-group network internal
+	#  network-object host testname2
 	if ($line =~ /^object-group\snetwork/m) { # find the lines *starts* with object-group<space>network
 		@object_group_cmd = split (' ', $line);
 		$object_group_name = $object_group_cmd[2];
@@ -305,10 +333,19 @@ foreach my $line (@Parse_array) {
 	if ($line =~ /^\snetwork-object/m || $line =~ /^\sgroup-object/m) { # find the lines *starts* with <space>network-object or <space>group-object
 		my @object_cmd = split (' ', $line);
 		if ($object_cmd[1] eq 'host') {
+			# check the name command array for 'network-object host <name>' command
+			if ($object_cmd[2] !~ m/$RE{net}{IPv4}/) {
+				foreach my $name_cmd_entry (@name_cmd) {
+					my @name_cmd_splitted = split (' ', $name_cmd_entry);
+					if ($object_cmd[2] eq $name_cmd_splitted[1]) {
+						$object_cmd[2] = $name_cmd_splitted[0];
+					}
+				}
+			}
 			$object_cmd[1] = $object_cmd[2];
 			$object_cmd[2] = '255.255.255.255';
 		}
-		if ($object_cmd[1] eq 'object') {
+		elsif ($object_cmd[1] eq 'object') {
 		
 		# the network object are before network object groups in the config (tested SW Version 8,9).
 		# the object_networks array can be searched, since it has all the entries at this point.
@@ -320,9 +357,18 @@ foreach my $line (@Parse_array) {
 				}
 			}
 		}
-		if ($object_cmd[0] eq 'group-object') {
+		elsif ($object_cmd[0] eq 'group-object') {
 			$object_cmd[2] = $object_cmd[1];
 			$object_cmd[1] = 'group-object';
+		}
+		# check the name command array for 'network-object <name>' command
+		elsif ($object_cmd[1] ne 'host' && $object_cmd[0] ne 'group-object' && $object_cmd[1] ne 'object') {
+			foreach my $name_cmd_entry (@name_cmd) {
+				my @name_cmd_splitted = split (' ',$name_cmd_entry);
+				if ($object_cmd[1] eq $name_cmd_splitted[1]) {
+					$object_cmd[1] = $name_cmd_splitted[0];
+				}
+			}
 		}
 		my $temp1 = join (' ',$object_group_name,$object_cmd[1],$object_cmd[2] );
 		push (@object_groups,$temp1);
@@ -340,26 +386,25 @@ foreach my $line (@Parse_array) {
 	# -----------
 	# Parse ACLs|
 	# -----------
+	#
 	# Example:
 	# myfirewall.cfg:access-list tun-opelgmbh remark #ID00011 - Fa. opelgmbh
-	# myfirewall.cfg:access-list tun-opelgmbh extended permit ip object-group mss-opelgmbh object-group fa-opelgmbh time-range End-Mar-20
-	# 
-		
-	if ($line =~ /^access-list\s/m && $line !~ /remark/m ) { # find the lines *starts* with access-list
+	# myfirewall.cfg:access-list tun-opelgmbh extended permit ip object-group its-opelgmbh object-group fa-opelgmbh time-range End-Mar-20
+	elsif ($line =~ /^access-list\s/m && $line !~ /remark/m ) { # find the lines *starts* with access-list
 		push (@access_list_cmds, $line);
 	}
 	
 	#---------------------
 	# Parse Static Routes|
 	#---------------------
-	
-	if ($line =~ /^route\s/m) { # find the lines *starts* with route
+	#
+	elsif ($line =~ /^route\s/m) { # find the lines *starts* with route
 		push(@route_cmd,$line);
 	}
 	
-	# -----------------
-	# Parse L2L IPSec | 
-	# -----------------
+	# --------------------
+	# Parse L2L IPSec VPN| 
+	# --------------------
 	#
 	# This parse is strongly based on the order of commands in the cisco asa config.
 	# If cisco changes it the complete parse will fail.
@@ -374,8 +419,7 @@ foreach my $line (@Parse_array) {
 	#
 	# Example:
 	# crypto map <crypto_map_name> <ID> match address <ACL-name>
-	
-	if ($line =~ /^crypto\smap/m && $line =~ /match\saddress/m) { # find the lines *starts* with "crypto map" and contains "match address"
+	elsif ($line =~ /^crypto\smap/m && $line =~ /match\saddress/m) { # find the lines *starts* with "crypto map" and contains "match address"
 		my @crypto_map_match_cmd = split (' ', $line);
 		$cry_map_name_id = join(' ',$crypto_map_match_cmd[2],$crypto_map_match_cmd[3]);
 		$cry_matchaddr = $crypto_map_match_cmd[6];
@@ -387,14 +431,12 @@ foreach my $line (@Parse_array) {
 	#
 	# Example:
 	# crypto map <crypto_map_name> <ID> set peer <Peer IP> 
-	
-	if ($line =~ /^crypto\smap/m && $line =~ /set peer/m) { # find the lines *starts* with 'crypto map' and contains 'set peer'
+	elsif ($line =~ /^crypto\smap/m && $line =~ /set peer/m) { # find the lines *starts* with 'crypto map' and contains 'set peer'
 		my @crypto_map_peer_cmd = split (' ', $line);
 		my $cry_map_name_id_2 = join (' ',$crypto_map_peer_cmd[2],$crypto_map_peer_cmd[3]);
 		if ($cry_map_name_id eq $cry_map_name_id_2) {
 			$cry_peer = $crypto_map_peer_cmd[6];
 		}
-		
 	}
 	
 	# --------------------------
@@ -403,8 +445,7 @@ foreach my $line (@Parse_array) {
 	# 
 	# Example:
 	# crypto map <crypto_map_name> <ID> set ikev1 transform-set <transform_set like ESP-AES-256-SHA>
-	
-	if ($line =~ /^crypto\smap/m && $line =~ /set\sikev1\stransform-set/m) { # find the lines *starts* with "crypto map" and contains "set ikev1 transform-set"
+	elsif ($line =~ /^crypto\smap/m && $line =~ /set\sikev1\stransform-set/m) { # find the lines *starts* with "crypto map" and contains "set ikev1 transform-set"
 		my @crypto_map_trset_cmd = split (' ', $line);
 		my $cry_map_name_id_2 = join (' ',$crypto_map_trset_cmd[2],$crypto_map_trset_cmd[3]);
 		if ($cry_map_name_id eq $cry_map_name_id_2) {
@@ -419,37 +460,55 @@ foreach my $line (@Parse_array) {
 		}
 	}
 	
-	#-------------------------------
-	#Parse IPSec enabled Interface |
-	#-------------------------------
-	#
+	#---------------------------
+	# Parse dynamic IPSec  VPN |
+	#---------------------------
 	#
 	#example for dynamic map
 	#crypto dynamic-map <dynmap-name> <ID> match address <access-list>
 	#crypto dynamic-map <dynmap-name> <ID> set ikev1 transform-set <transformsets>
-	
-	if ($line =~ /^crypto\sdynamic-map/m && $line =~ /match\saddress/m) {
+	elsif ($line =~ /^crypto\sdynamic-map/m && $line =~ /match\saddress/m) {
 		my @crypto_dynmap_cmd = split (' ', $line);
 		$cry_dynmap_acl = $crypto_dynmap_cmd[6];
 	}
 
-	if ($line =~ /^crypto\sdynamic-map/m && $line =~ /set\sikev1\stransform-set/m) {
+	elsif ($line =~ /^crypto\sdynamic-map/m && $line =~ /set\sikev1\stransform-set/m && $cry_dynmap_acl ne '') {
 		my @crypto_dynmap_cmd = split (' ', $line);
 		push (@crypto_map_datas,$crypto_dynmap_cmd[2]." ".$crypto_dynmap_cmd[3]." ".$cry_dynmap_acl." "."254.254.254.250"." ".$crypto_dynmap_cmd[7]);
 		$cry_dynmap_acl ='';
 	}
 	
 
-	#-------------------------------
-	#Parse IPSec enabled Interface |
-	#-------------------------------
+	#--------------------------------
+	# Parse IPSec enabled Interface |
+	#--------------------------------
+	#
 	# Currently only one :-)
 	# crypto map <crypto_map_name> interface <interface_name>
-	
-	if ($line =~ /^crypto\smap/m && $line =~ /interface/m) { # find the lines *starts* with "crypto map" and contains "interface"
+	elsif ($line =~ /^crypto\smap/m && $line =~ /interface/m) { # find the lines *starts* with "crypto map" and contains "interface"
 		my @crypto_map_if_cmd = split (' ', $line);
 		$crypto_if = $crypto_map_if_cmd[4];
 	}
+	
+	# -----------
+	# Parse NATs|
+	# -----------
+	#
+	# only explicit NAT Rules are parsed! Object NAT not parsed.
+	# example:
+	# nat (inside,dmz1) source dynamic All-Data-Networks interface destination static starwebnet1 starwebnet1
+	# nat (inside,dmz1) source dynamic its-data interface destination static vpn-extcompany vpn-extcompany
+	elsif ($line =~ /^nat\s/m) { # find the lines *starts* with "nat"
+		push (@nat_cmds, $line);
+	}
+	
+	#ASA <-cloud with IP-> Router <-Cloud without IP-> VPN Peer (Router) <-> network tables (host & net)
+
+	#NAT (DST or SRC NAT IPs):
+	#mi legyen?
+
+	#Remote access VPN Pools:
+	#ASA <-cloud with IP-> Router <-Cloud without IP-> VPN User without IP (Host) <-> network tables (IP Pools)
 	
 }
 
@@ -569,6 +628,8 @@ my $cisco_network = qr{
     |
     (?:object-group\s+[\S]+)
     |
+    any4
+	|
     any
 }x;
 
@@ -590,6 +651,8 @@ my $cisco_ports = qr{
 	(?:gt\s+\S+)
 	|
 	(?:lt\s+\S+)
+	|
+	(?:object-group\s+[\S]+)
 }x;
 
 my $cisco_regex = qr{^
