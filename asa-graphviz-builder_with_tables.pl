@@ -15,7 +15,7 @@
 # asa-graphviz-builder_with_tables.pl <Input filename> <Output filename>
 #
 # Mandatory arguments:
-# -------------------
+# --------------------
 # <Input filename> : Name of inputfile. This file should contain the Cisco ASA configuration
 # <Output filename> : Name of outputfile. This name will be used for the dot file and for the generated png and svg file
 #
@@ -30,6 +30,25 @@
 # - The natted adresses would be presented too, since it can be proxy arp-ed to the firewall
 # or could be a virtual mapped network and this should be part of the IP Topology.
 # -----------------------------------------------------------------------------------------------
+# Feature List:
+# 1. the script represents:
+#   Firewall:
+# - ASA interface (ip, mask, security-level, vlan)
+# - ASA hostname
+# - Proxy ARP IP and mapped IP (from nat rules)
+#   Route:
+# - static routes
+# - direct nets
+#   VPN (IPSec IKEv1):
+# - Peer ip (script identifies if peer has dynamic IP)
+# - Transform set - Phase 2.
+# - Crypto acl name
+# - IPSec networks behind the peer (policy based vpn)
+#   Specific:
+# - if you have multiple asa firewalls and they are peers for each other or one has route to another, they will be identified.
+# 2. resolves FQDN objects
+# 3. resolves object names and names if used.
+# -----------------------------------------------------------------------------------------------
 # [solved] if name is used it will not work. Do not use names! Like "route inside 1.1.1.0 255.255.255.0 intern-router"
 # -----------------------------------------------------------------------------------------------
 # Change History
@@ -39,6 +58,11 @@
 # 		   if the security-level > 49 put it on the left side, else put on right side.
 # 16.02.14 IPSec IKEv1 Lan-to-Lan VPNs are parsed and graphed too.
 # 21.02.14 IPSec IKEv1 Lan-to-Lan Dynamic VPNs are parsed and graphed too. They will be out on the default route.
+# 09.07.14 The name command checked in objects.
+#		   The nslookup for FQDN objects and some cosmetic bugs.
+#		   Starting NAT Virtual IPs to show.
+# 17.07.14 IPSec IKEv1 Lan-to-Lan Peers are checked if they are nexthops on the graphed firewall.
+#		   NAT Virtual IPs will be showed too.
 # -----------------------------------------------------------------------------------------------
 # 0.1 beta: (10th of July 2013)
 # 0.2 beta: (18th of Dec 2013)
@@ -65,6 +89,10 @@ if ($numberofargs < 2) {
     print "-------\n";
     print "asa-graphviz-builder_with_tables.pl <Input filename> <Output filename>\n";
     print "\n";
+	print "First create a folder with the name 'config' and put all of your asa config in it!";
+	print "the configs must have the extension .cfg!";	
+	print "We will check if any nexthop or vpn peer is one of your cisco asa.";
+	print "\n";
     print "Mandatory arguments:\n";
     print "-------------------\n";
     print " <Input filename> : Name of inputfile. This file should contain the Cisco ASA configuration\n";
@@ -88,7 +116,7 @@ if ($numberofargs < 2) {
 # This part collects from cfg files (ASA configs) the IPs, since they are not in DNS registered.
 ##################################################################################################
 
-my @cfgfiles = <asa*.cfg>; # only the config files from asa firewall are used!!! 
+my @cfgfiles = <./config/*.cfg>; # only the config files from asa firewall are usefull currently!! 
 my @firewallinterfaces;
 
 ### Open cfg files and put the contents in one HUGE array
@@ -143,7 +171,9 @@ my @firewallinterfaces;
 		}
 	}   
 	close (PARSEFILE);
+	print "\n";
 }
+print "Nexthop & vpn peer table done.\n";
 
 # firewallinterfaces array example:
 # fw1 Port-channel1.251 192.168.250.1 255.255.255.240 sweden
@@ -156,7 +186,7 @@ my @firewallinterfaces;
 
 ##################################################################################################
 # 3.) Setup initialisation - BEGIN
-# Save the interfaces, routes and hostname in arrays
+# Save the interfaces, routes and hostname crypto destinations, nat ips in arrays
 ##################################################################################################
 
 # 3/1.) Open input-file and put the contents in one HUGE array
@@ -172,7 +202,7 @@ print "Done\n";
 
 close (PARSEFILE);
 
-# 3/2.) Save the names, interfaces, routes and hostname in arrays and variable
+# 3/2.) Save the names, interfaces, routes and hostname, objects, acls, nat rules in arrays and variable
 ##################################################################################################
 
 my @hostname_cmd;
@@ -214,6 +244,7 @@ my $cry_dynmap_acl;
 my @crypto_map_datas; #					---------- key array for crypto match, peer, trset ----------
 
 my @nat_cmds;
+my @natglobal_cmds;
 
 foreach my $line (@Parse_array) {
 
@@ -478,7 +509,6 @@ foreach my $line (@Parse_array) {
 		$cry_dynmap_acl ='';
 	}
 	
-
 	#--------------------------------
 	# Parse IPSec enabled Interface |
 	#--------------------------------
@@ -495,19 +525,23 @@ foreach my $line (@Parse_array) {
 	# -----------
 	#
 	# only explicit NAT Rules are parsed! Object NAT not parsed.
-	# example:
-	# nat (inside,dmz1) source dynamic All-Data-Networks interface destination static starwebnet1 starwebnet1
-	# nat (inside,dmz1) source dynamic its-data interface destination static vpn-extcompany vpn-extcompany
+	# nat with global (old style nat) is supported to.
+	#
+	
 	elsif ($line =~ /^nat\s/m) { # find the lines *starts* with "nat"
 		push (@nat_cmds, $line);
 	}
 	
-	#ASA <-cloud with IP-> Router <-Cloud without IP-> VPN Peer (Router) <-> network tables (host & net)
-
-	#NAT (DST or SRC NAT IPs):
-	#mi legyen?
-
-	#Remote access VPN Pools:
+	elsif ($line =~ /^global\s/m) { # find the lines *starts* with "nat"
+		push (@natglobal_cmds, $line);
+	}
+	
+	# -------------------
+	# Parse Remote pools|
+	# -------------------
+	#
+	#
+	#Remote access VPN Pools if locally configured:
 	#ASA <-cloud with IP-> Router <-Cloud without IP-> VPN User without IP (Host) <-> network tables (IP Pools)
 	
 }
@@ -555,6 +589,10 @@ foreach my $route_cmd (@route_cmd) {
 }
 @routerip = uniq (@routeripsunsorted);
 
+# 3/4.) extract ips from the access-lists
+#
+#
+##################################################################################################
 # 3/4/1.) ungroup group-in-group objects 2 times!
 ##################################################################################################
 # it can be done more times as 2... but now just 2 times
@@ -604,14 +642,6 @@ foreach my $object_group1 (@object_groups_ungrupped) {
 #
 # Idea for this code used from http://www.perlmonks.org/?node_id=906142
 
-#my $acl_name;
-#my $acl_action;
-#my $acl_protocol;
-#my $acl_src;
-#my $acl_src_port;
-#my $acl_dst;
-#my $acl_dst_port;
-
 my $cisco_protocol = qr {
     (?:ip|tcp|udp|icmp|esp) 
     |
@@ -658,7 +688,7 @@ my $cisco_ports = qr{
 my $cisco_regex = qr{^
     access-list
     \s+
-    (?<name>[\S]+) # name
+    (?<name>[\S]+) # name of the acl
     \s+
     extended
     \s+
@@ -737,6 +767,13 @@ foreach my $rule (@access_list_cmds) {
 # Port-channel1.251 192.168.250.1 255.255.255.240 sweden 0 251
 # Port-channel1.252 192.168.250.17 255.255.255.240 china 0 252
 ##################################################################################################
+#
+# query arguments:
+# r Some input is required; an empty response will be refused. This option is only meaningful when there is no default input (see the d flag character below).
+# k \@Array The next argument is a reference to an array of allowable keywords. The input is matched against the array elements in a case-insensitive manner, with unambiguous abbreviations allowed. This flag implies the s flag.
+# d The next argument is the default input. This string is used instead of an empty response from the user. The default value can be a scalar value, a reference to a scalar value, or a reference to a subroutine, which will be invoked for its result only if a default value is needed (no input is given).
+# source: http://search.cpan.org/~akste/Term-Query-2.0/Query.pm
+#
 
 my $side;
 my $prompt;
@@ -786,11 +823,95 @@ foreach my $interfacesnameseclevelALL (@interfacesnameseclevelALL) {
 }
 print "\n";
 
-# query arguments:
-# r Some input is required; an empty response will be refused. This option is only meaningful when there is no default input (see the d flag character below).
-# k \@Array The next argument is a reference to an array of allowable keywords. The input is matched against the array elements in a case-insensitive manner, with unambiguous abbreviations allowed. This flag implies the s flag.
-# d The next argument is the default input. This string is used instead of an empty response from the user. The default value can be a scalar value, a reference to a scalar value, or a reference to a subroutine, which will be invoked for its result only if a default value is needed (no input is given).
-# source: http://search.cpan.org/~akste/Term-Query-2.0/Query.pm
+# 3/6.) Create the NAT IP Table
+##################################################################################################
+#
+# nat_cmds array example:
+# >>x<< is the sing for NAT IPs.
+# nat (inside,>>dmz1<<) source dynamic All-Data-Networks >>interface<< destination static starwebnet1 starwebnet1
+# nat (web,outside) source dynamic inside-net >>PAT-178.184.31.129<<
+# nat (web,outside) source static myhost1 >>NAT-178.184.31.131<<
+# nat (web,outside) source static App-localnet >>App-localnet<< destination static App-remotenet >>App-remotenet<<
+# old style:
+# global (outside) 10 >>144.213.193.160<<
+
+my @prxyarpip;
+
+my $qr_nat_after_auto = qr {
+	(?:after-auto)
+}x;
+
+my $qr_nat_type = qr {
+	(?:static\s[\S]+\s[\S]+)
+	|
+	(?:dynamic\s[\S]+\s[\S]+)
+}x;
+
+my $cisco_nat_regex = qr{^
+	nat
+	\s+
+	(?<real_if>[\S]+) # real interface
+	,
+	(?<mapped_if>[\S]+) # mapped interface
+	(?:\s+(?<nat_aa>$qr_nat_after_auto))? # nat_after-auto
+	\s+source\s+
+	(?<nattype_src>$qr_nat_type) # nat type for source
+	(?:\s+destination\s+)?
+	(?:(?<nattype_dst>$qr_nat_type))? # nat type for destination
+}x;
+
+#
+# The big problem is that the IPs are not checked if they are in the network of the interface IP.
+# The identity nat causes problems!
+#
+
+foreach my $rule (@nat_cmds) {
+	chomp $rule;
+	$rule =~ tr/(//d; # I cant get the parentheses with regex above, have to remove them.. :-(
+	$rule =~ tr/)//d;
+	if ( $rule =~ m/$cisco_nat_regex/ ) {
+		my $realif = $+{real_if};
+		my $mappedif = $+{mapped_if};
+		my $nataaon = $+{nat_aa};
+		my $natsrc = $+{nattype_src};
+		my $natdst = $+{nattype_dst};
+	
+		my @natsrc_splitted = split (' ', $natsrc);
+		# mapped no to interface and not ip but object
+		if ($natsrc_splitted[2] ne "interface" && $natsrc_splitted[2] !~ m/$RE{net}{IPv4}/) {
+			#object-groups not checked...only objects currently
+			foreach my $object_network (@object_networks) {
+				my @object_network_splitted = split (' ', $object_network);
+				if ($natsrc_splitted[2] eq $object_network_splitted[0]) {
+					push (@prxyarpip,$mappedif." ".$object_network_splitted[1]);
+				}
+			}
+		}
+		# mapped to ip
+		if ($natsrc_splitted[2] =~ m/$RE{net}{IPv4}/) {
+			push (@prxyarpip,$mappedif." ".$natsrc_splitted[2]);
+		}
+	}
+}
+
+#global?
+# old style:
+# global (outside) 10 >>144.213.193.160<<
+#
+# @prxyarpip
+# example output:
+# outside 1.1.1.1
+# inside 2.2.2.2
+
+foreach my $rule (@natglobal_cmds) {
+	my @rule_splitted = split (' ',$rule);
+	$rule_splitted[1] =~ tr/(//d;
+	$rule_splitted[1] =~ tr/)//d;
+	if ($rule_splitted[3] ne "interface") {
+		push (@prxyarpip,$rule_splitted[1]." ".$rule_splitted[3]);
+	}
+}
+my @prxyarpip_u = uniq (@prxyarpip);
 
 ##################################################################################################
 # 3.) Setup initialisation - END
@@ -846,17 +967,36 @@ foreach my $interfaces (@interfaces) {
 }
 print "\n";
 
-# 4/3.) Static Net Node
+# 4/2.1.) Proxy ARP IP Table Node
+#
+# @prxyarpip array example:
+# outside 1.1.1.1
+# inside 2.2.2.2
+##################################################################################################
+
+print "# 3.) Description: nodes for proxy arp ips\n";
+print "# Syntax: PARPipstoifoutside [shape=Mrecord, fontsize=11, label=\"Proxy ARPs|10.1.1.3|10.1.2.5\", style=filled, fillcolor=firebrick1]\n";
+print "# Syntax: PARPipstoifinside [shape=Mrecord, fontsize=11, label=\"Proxy ARPs|10.11.11.1|10.11.11.3\", style=filled, fillcolor=firebrick1]\n";
+print "\n";
+
+my @prxyarpip_label;
+foreach my $prxyarpip (@prxyarpip_u) {
+	push (@prxyarpip_label,$prxyarpip."|");
+}
+print "PARPipstoif","[shape=Mrecord, fontsize=11, label=\"ProxyARP(mapped IP)|",@prxyarpip_label,"\", style=filled, fillcolor=firebrick1]\n";
+
+# 4/3.) Static Net Table Node
 #
 # route_cmd array example: route austria-hungary 213.33.126.80 255.255.255.240 192.168.250.148 1";
 ##################################################################################################
 
 print "# 3.) Description: nodes for static route nets\n";
-print "# Syntax: Rnetstorouter10101010 [shape=Mrecord, fontsize=11, label=\"10.1.1.0/24\\n10.1.2.0/24\", style=filled, fillcolor=red]\n";
-print "# Syntax: Rhoststorouter10101010 [shape=Mrecord, fontsize=11, label=\"10.1.1.1/32\\n10.1.2.20/32\", style=filled, fillcolor=red]\n";
+print "# Syntax: Rnetstorouter10101010 [shape=Mrecord, fontsize=11, label=\"Network routes|10.1.1.0/24|10.1.2.0/24\", style=filled, fillcolor=red]\n";
+print "# Syntax: Rhoststorouter10101010 [shape=Mrecord, fontsize=11, label=\"Host routes|10.1.1.1/32|10.1.2.20/32\", style=filled, fillcolor=red]\n";
 print "\n";
 
 foreach my $routerip (@routerip) {
+
 	push (my @remotehostlabels,'Host routes|');
 	push (my @remotenetlabels,'Network routes|');
 	foreach my $route_cmd (@route_cmd) {
@@ -873,7 +1013,7 @@ foreach my $routerip (@routerip) {
 			}
 		}
 	}
-	
+
 	my @routeripnodot = split ('\.', $routerip);
 	my $remotenetlabelssize = $#remotenetlabels + 1;
 	if ($remotenetlabelssize > 1) {
@@ -886,7 +1026,7 @@ foreach my $routerip (@routerip) {
 }
 print "\n";
 
-# 4/4.) Crypto ACL Destination Node
+# 4/4.) Crypto ACL Destination Table Node
 # The network that through vpn reachable
 #
 # cry_acl_dst_groupsu array example
@@ -901,9 +1041,10 @@ print "# Syntax: RhoststoIPSecPeer1010101 [shape=Mrecord, fontsize=11, label=\"1
 print "\n";
 
 foreach my $crypto_map_data (@crypto_map_datas) {
-	my @crypto_map_data_splitted = split (' ', $crypto_map_data);
+
 	push (my @remotehostlabels,'Hosts|');
 	push (my @remotenetlabels,'Networks|');
+	my @crypto_map_data_splitted = split (' ', $crypto_map_data);
 	foreach my $cry_acl_dst_group (@cry_acl_dst_groupsu) {
 		my @cry_acl_dst_group_splitted = split (' ', $cry_acl_dst_group);
 		if ($crypto_map_data_splitted[3] eq $cry_acl_dst_group_splitted[0]) {
@@ -978,7 +1119,19 @@ foreach my $crypto_map_data (@crypto_map_datas) {
 		print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"","dynamic IP","\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\", labelloc=\"b\", image=\"router.gif\"]\n";
 	}
 	else {
-		print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"",$crypto_map_data_splitted[3],"\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\", labelloc=\"b\", image=\"router.gif\"]\n";
+		my $itwasfirewall = 'false';
+		foreach my $firewallinterface (@firewallinterfaces) {
+			my @firewallinterface_splitted = split (' ',$firewallinterface);
+			if ($crypto_map_data_splitted[3] eq $firewallinterface_splitted[2]) {
+				print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"",$crypto_map_data_splitted[3],"\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\\n",$crypto_map_data_splitted[3],"\\n",$firewallinterface_splitted[0]," - IF: ",$firewallinterface_splitted[4],"\", labelloc=\"b\", image=\"firewall.gif\"]\n";
+				$itwasfirewall = 'true';
+			}
+		}
+		if ($itwasfirewall eq 'false') {
+			print "IPSecPeer",@crypto_peerip_splitted," [shape=none, fontsize=11, label=\"",$crypto_map_data_splitted[3],"\\n",$crypto_map_data_splitted[4],"\\n",$crypto_map_data_splitted[2],"\", labelloc=\"b\", image=\"router.gif\"]\n";
+			# Output example:
+			#IPSecPeer20360137130 [shape=none, fontsize=11, label="203.60.137.130\nTFS-aes256-sha-hmac\nCrypt-myCompany", labelloc="b", image="router.gif"]
+		}		
 	}
 }
 print "\n";
