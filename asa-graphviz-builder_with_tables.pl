@@ -877,8 +877,12 @@ foreach my $rule (@nat_cmds) {
 		my $natdst = $+{nattype_dst};
 	
 		my @natsrc_splitted = split (' ', $natsrc);
-		# mapped no to interface and not ip but object
-		if ($natsrc_splitted[2] ne "interface" && $natsrc_splitted[2] !~ m/$RE{net}{IPv4}/) {
+		# mapped not
+		# to interface and
+		# not to ip (object name should not contain IP!) and
+		# not identity nat
+		# but object (object-group not checked currently)
+		if ($natsrc_splitted[2] ne "interface" && $natsrc_splitted[2] !~ m/$RE{net}{IPv4}/ && $natsrc_splitted[1] ne $natsrc_splitted[2]) {
 			#object-groups not checked...only objects currently
 			foreach my $object_network (@object_networks) {
 				my @object_network_splitted = split (' ', $object_network);
@@ -888,7 +892,7 @@ foreach my $rule (@nat_cmds) {
 			}
 		}
 		# mapped to ip
-		if ($natsrc_splitted[2] =~ m/$RE{net}{IPv4}/) {
+		elsif ($natsrc_splitted[2] =~ m/$RE{net}{IPv4}/ && $natsrc_splitted[1] ne $natsrc_splitted[2]) {
 			push (@prxyarpip,$mappedif." ".$natsrc_splitted[2]);
 		}
 	}
